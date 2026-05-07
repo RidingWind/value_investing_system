@@ -1,0 +1,25 @@
+# 默认配置文件
+redis:
+  host: localhost
+  port: 6379
+
+data:
+  tushare_token: ""
+  primary_source: tushare
+  backup_sources: ["akshare", "baostock"]
+  market_cron: "30 15 * * 1-5"
+
+knowledge:
+  vector_db_path: "./chroma_db"
+  embedding_model: "paraphrase-multilingual-MiniLM-L12-v2"
+
+backtest:
+  commission: 0.0003
+  slippage: 0.001
+
+portfolio:
+  initial_capital: 100000
+  cash_permanent_floor: 0.05
+
+output:
+  report_dir: "./reports"

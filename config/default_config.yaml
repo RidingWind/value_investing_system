@@ -1,0 +1,18 @@
+# 系统基础设施配置文件（启动时加载，修改后需重启服务）
+database:
+  # 统一数据库配置（SQLite 或 PostgreSQL），用于日线数据持久化
+  url: "sqlite:///./data/vinvest.db"        # 开发环境用 SQLite
+  # url: "postgresql://user:pass@localhost/vinvest"   # 生产环境
+
+redis:
+  host: localhost
+  port: 6379
+
+# 知识库存储路径（依赖 ChromaDB，修改后重启生效）
+knowledge:
+  vector_db_path: "./chroma_db"
+  embedding_model: "paraphrase-multilingual-MiniLM-L12-v2"
+
+# 日志与输出目录
+output:
+  report_dir: "./reports"

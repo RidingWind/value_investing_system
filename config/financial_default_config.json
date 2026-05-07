@@ -1,0 +1,18 @@
+{
+  "income": {
+    "name": "利润表",
+    "indicators": ["revenue", "operating_profit", "net_profit", "recurring_net_profit"]
+  },
+  "balance": {
+    "name": "资产负债表",
+    "indicators": ["total_assets", "total_liabilities", "total_equity", "cash_and_equivalents"]
+  },
+  "cashflow": {
+    "name": "现金流量表",
+    "indicators": ["operating_cash_flow"]
+  },
+  "indicator": {
+    "name": "财务指标",
+    "indicators": ["roe", "roa", "gross_margin", "net_margin", "eps", "debt_to_equity", "revenue_growth_yoy", "net_profit_growth_yoy"]
+  }
+}
