@@ -38,6 +38,13 @@ const routes = [
     name: 'FinancialConfig',
     component: () => import('@/views/FinancialConfig.vue'),
     meta: { title: '财务数据映射' }
+  },
+  // router/index.js
+  {
+    path: '/stock/daily',
+    name: 'StockDaily',
+    component: () => import('@/views/StockDaily.vue'),
+    props: route => ({ symbol: route.query.symbol })
   }
 ]
 

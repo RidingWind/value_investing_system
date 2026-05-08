@@ -3,8 +3,7 @@
 包含利润表、资产负债表、现金流量表、主要财务指标
 """
 from datetime import datetime, UTC
-from sqlalchemy import ForeignKey, Boolean, JSON, Column, Integer, String, Date, Numeric, DateTime, UniqueConstraint, \
-    Index, func, Text
+from sqlalchemy import JSON, Column, Integer, String, Date, DateTime, UniqueConstraint, Index, func, Text
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()

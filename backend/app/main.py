@@ -15,6 +15,7 @@ from app.core.config import load_infra_config
 from app.core.plugins.param_plugin import ParamPlugin
 from app.core.plugins.market_plugin import MarketPlugin
 from app.core.plugins.financial_plugin import FinancialPlugin
+from app.api.v1.search import router as search_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -50,6 +51,8 @@ app.add_middleware(  # type: ignore[arg-type]
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(search_router, prefix="/api/v1")
 
 # 注册路由
 param_plugin.register_routers(app)
