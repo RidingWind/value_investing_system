@@ -46,12 +46,7 @@
     <el-card class="mt-20">
       <template #header>手动补全行情</template>
       <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center;">
-        <el-input
-          v-model="fetchSymbols"
-          placeholder="股票代码列表，逗号分隔（如 000001.SZ,600000.SH）"
-          style="width: 320px;"
-          clearable @input="querySymbol = querySymbol.toUpperCase()"
-        />
+        <StockMultiSelect v-model="fetchSymbols" style="width: 400px" />
         <el-date-picker
           v-model="fetchDateRange"
           type="daterange"
@@ -90,6 +85,7 @@
 </template>
 
 <script setup>
+import StockMultiSelect from '@/components/StockMultiSelect.vue'
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
@@ -162,13 +158,16 @@ const searchRange = async () => {
 }
 
 // 手动补全
-const fetchSymbols = ref('')
+const fetchSymbols = ref([])
 const fetchDateRange = ref([])
 const fetching = ref(false)
 const fetchResult = ref('')
 const triggerFetch = async () => {
-  if (!fetchSymbols.value) { ElMessage.warning('请输入股票代码'); return }
-  const symbols = fetchSymbols.value.split(',').map(s => s.trim())
+  const symbols = fetchSymbols.value
+  if (!symbols.length) {
+    ElMessage.warning('请选择股票')
+    return
+  }
   const payload = { symbols }
   if (fetchDateRange.value && fetchDateRange.value.length === 2) {
     payload.start_date = fetchDateRange.value[0]

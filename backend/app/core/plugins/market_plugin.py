@@ -16,7 +16,7 @@ class MarketPlugin(SubsystemPlugin):
         factory = DataSourceFactory(param_service)
         primary = factory.create_primary()
         backups = factory.create_backups()
-        data_source = FallbackDataSource(primary, backups)
+        data_source = FallbackDataSource(primary, backups, param_service)
         app.state.data_source = data_source
 
         # 初始化行情存储与调度器

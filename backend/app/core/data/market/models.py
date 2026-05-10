@@ -4,9 +4,10 @@
 """
 from sqlalchemy import Column, Integer, String, Date, Numeric, DateTime, UniqueConstraint, Index, func
 from sqlalchemy.orm import declarative_base
+from app.utils.sqlite_types import SqliteNumeric
+import decimal
 
 Base = declarative_base()
-
 
 class DailyQuote(Base):
     """日线行情表（复权数据）"""
@@ -21,7 +22,7 @@ class DailyQuote(Base):
     close = Column(Numeric(15, 4), comment="收盘价（前复权）")
     volume = Column(Numeric(20, 2), comment="成交量（股）")
     amount = Column(Numeric(20, 2), comment="成交额（元）")
-    adj_factor = Column(Numeric(15, 6), default=1.0, comment="后复权因子，用于从后复权价格反向推导真实价格")
+    adj_factor = Column(Numeric(15, 6), default=float(1.0), comment="后复权因子，用于从后复权价格反向推导真实价格")
     source = Column(String(20), default="akshare", comment="数据来源")
     created_at = Column(DateTime, default=func.now(), comment="记录创建时间")
 

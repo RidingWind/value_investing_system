@@ -15,7 +15,12 @@ class DataSource(ABC):
         self.param_service = param_service
 
     @abstractmethod
-    def fetch_daily_quote(self, symbols: List[str], trade_date: Optional[date] = None) -> pd.DataFrame:
+    def fetch_daily_quote(
+            self,
+            symbols: List[str],
+            start_date: Optional[date] = None,
+            end_date: Optional[date] = None
+    ) -> pd.DataFrame:
         """获取日线行情，返回标准字段 DataFrame"""
         pass
 

@@ -46,7 +46,7 @@
     <el-card class="mt-20">
       <template #header>手动补全财务数据</template>
       <div>
-        <el-input v-model="fetchSymbols" placeholder="股票代码列表，逗号分隔" style="width: 400px;"  @input="fetchSymbols = fetchSymbols.toUpperCase()" />
+        <StockMultiSelect v-model="fetchSymbols" style="width: 400px" />
         <el-select v-model="fetchQuarters" placeholder="季度数" class="ml-10" style="width: 120px;">
           <el-option label="1季度" :value="1" />
           <el-option label="2季度" :value="2" />
@@ -66,10 +66,30 @@
               <el-tag :type="row.status === 'success' ? 'success' : 'danger'" size="small">{{ row.status }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="income" label="利润表" width="80" />
-          <el-table-column prop="balance" label="资产负债表" width="100" />
-          <el-table-column prop="cashflow" label="现金流" width="80" />
-          <el-table-column prop="indicator" label="指标" width="80" />
+          <el-table-column label="利润表" width="100">
+            <template #default="{ row }">
+              <el-link type="primary" v-if="row.income > 0" @click="showDetail(row.symbol, 'income', row.indicator_details)">{{ row.income }} 条</el-link>
+              <span v-else>0</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="资产负债表" width="100">
+            <template #default="{ row }">
+              <el-link type="primary" v-if="row.balance > 0" @click="showDetail(row.symbol, 'balance', row.indicator_details)">{{ row.balance }} 条</el-link>
+              <span v-else>0</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="现金流" width="80">
+            <template #default="{ row }">
+              <el-link type="primary" v-if="row.cashflow > 0" @click="showDetail(row.symbol, 'cashflow', row.indicator_details)">{{ row.cashflow }} 条</el-link>
+              <span v-else>0</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="指标" width="80">
+            <template #default="{ row }">
+              <el-link type="primary" v-if="row.indicator > 0" @click="showDetail(row.symbol, 'indicator', row.indicator_details)">{{ row.indicator }} 条</el-link>
+              <span v-else>0</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="error" label="错误" show-overflow-tooltip />
         </el-table>
       </div>
@@ -93,9 +113,18 @@
       </el-table>
     </el-card>
   </div>
+
+  <el-dialog v-model="detailDialogVisible" :title="detailTitle" width="600px">
+    <el-table :data="detailData" border max-height="400">
+      <el-table-column prop="end_date" label="报告期" width="120" />
+      <el-table-column prop="indicator_name" label="指标名称" width="200" />
+      <el-table-column prop="value" label="值" />
+    </el-table>
+  </el-dialog>
 </template>
 
 <script setup>
+import StockMultiSelect from '@/components/StockMultiSelect.vue'
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
@@ -172,19 +201,25 @@ const searchRange = async () => {
 }
 
 // 手动补全
-const fetchSymbols = ref('')
+const fetchSymbols = ref([])
 const fetchQuarters = ref(6)
 const fetching = ref(false)
 const fetchResult = ref(null)
 const triggerFetch = async () => {
-  if (!fetchSymbols.value) { ElMessage.warning('请输入股票代码'); return }
-  const symbols = fetchSymbols.value.split(',').map(s => s.trim()).filter(Boolean)
-  if (!symbols.length) { ElMessage.warning('请输入有效的股票代码'); return }
+  const symbols = fetchSymbols.value   // 已经是数组，如 ['000001.SZ', '600519.SH']
+  if (!symbols || symbols.length === 0) {
+    ElMessage.warning('请选择股票')
+    return
+  }
+  if (!fetchQuarters.value) {
+    ElMessage.warning('请选择季度数')
+    return
+  }
   fetching.value = true
   fetchResult.value = null
   try {
     const { data } = await axios.post('/api/v1/financial/fetch', {
-      symbols,
+      symbols,                     // 直接传数组
       quarters: fetchQuarters.value
     })
     fetchResult.value = data
@@ -197,6 +232,27 @@ const triggerFetch = async () => {
     fetching.value = false
   }
 }
+// const triggerFetch = async () => {
+//   if (!fetchSymbols.value) { ElMessage.warning('请输入股票代码'); return }
+//   const symbols = fetchSymbols.value.split(',').map(s => s.trim()).filter(Boolean)
+//   if (!symbols.length) { ElMessage.warning('请输入有效的股票代码'); return }
+//   fetching.value = true
+//   fetchResult.value = null
+//   try {
+//     const { data } = await axios.post('/api/v1/financial/fetch', {
+//       symbols,
+//       quarters: fetchQuarters.value
+//     })
+//     fetchResult.value = data
+//     ElMessage.success(data.message)
+//     loadSummary()
+//     loadLogs()
+//   } catch (e) {
+//     ElMessage.error('采集失败: ' + (e.response?.data?.detail || e.message))
+//   } finally {
+//     fetching.value = false
+//   }
+// }
 
 // 日志
 const logs = ref([])
@@ -206,6 +262,23 @@ const loadLogs = async () => {
     const { data } = await axios.get(`/api/v1/financial/logs?limit=${logLimit}`)
     logs.value = data
   } catch {}
+}
+
+// 明细弹窗
+const detailDialogVisible = ref(false)
+const detailTitle = ref('')
+const detailData = ref([])
+
+const showDetail = (symbol, group, allDetails) => {
+  // 从该股票的明细中筛选对应报表组的数据
+  const filtered = allDetails.filter(item => item.report_group === group)
+  detailData.value = filtered.map(item => ({
+    end_date: item.end_date,
+    indicator_name: item.indicator_name,
+    value: item.value
+  }))
+  detailTitle.value = `${symbol} - ${group} 指标明细`
+  detailDialogVisible.value = true
 }
 
 onMounted(() => {

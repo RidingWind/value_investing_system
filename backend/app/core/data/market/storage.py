@@ -7,9 +7,7 @@ from sqlalchemy.orm import sessionmaker
 #如果使用pgsql,将sqlit_insert替换成pg_insert
 from sqlalchemy import text
 from app.core.data.market.models import Base, DailyQuote
-
 logger = logging.getLogger(__name__)
-
 
 class DataStorage:
     """持久化行情数据到 PostgreSQL"""
@@ -99,8 +97,8 @@ class DataStorage:
                     'close': float(row['close']) if not pd.isna(row['close']) else None,
                     'volume': float(row['volume']) if not pd.isna(row['volume']) else None,
                     'amount': float(row['amount']) if not pd.isna(row['amount']) else None,
-                    'adj_factor': Decimal(row.get('adj_factor', 1.0)),
-                    'source': source,
+                    'adj_factor': float(row.get('adj_factor', 1.0)),
+                    'source': row.get('source', 'akshare'),
                     'created_at': now
                 }
                 session.execute(text(sql), params)
@@ -135,5 +133,96 @@ class DataStorage:
             )
             count = result.scalar()
             return count > 0
+        finally:
+            session.close()
+
+    def get_daily_data(self, symbol: str, start_date: date = None, end_date: date = None, freq: str = "daily") -> dict:
+        session = self.Session()
+        try:
+            if freq == "daily":
+                q = session.query(DailyQuote).filter(DailyQuote.symbol == symbol)
+                if start_date:
+                    q = q.filter(DailyQuote.trade_date >= start_date)
+                if end_date:
+                    q = q.filter(DailyQuote.trade_date <= end_date)
+                q = q.order_by(DailyQuote.trade_date.asc())
+                rows = q.all()
+                # 转换为字典
+                items = [
+                    {
+                        "trade_date": r.trade_date,
+                        "open": r.open,
+                        "high": r.high,
+                        "low": r.low,
+                        "close": r.close,
+                        "volume": r.volume,
+                        "amount": r.amount,
+                    }
+                    for r in rows
+                ]
+            else:
+                # 聚合查询
+                trunc_map = {
+                    "weekly": "%Y-%W",
+                    "monthly": "%Y-%m",
+                    "yearly": "%Y",
+                }
+                trunc_format = trunc_map.get(freq, "%Y-%m-%d")
+                stmt = (
+                    session.query(
+                        func.strftime(trunc_format, DailyQuote.trade_date).label("period"),
+                        func.min(DailyQuote.trade_date).label("first_date"),
+                        func.max(DailyQuote.trade_date).label("last_date"),
+                        func.sum(DailyQuote.volume).label("volume"),
+                        func.sum(DailyQuote.amount).label("amount"),
+                        func.max(DailyQuote.high).label("high"),
+                        func.min(DailyQuote.low).label("low"),
+                        # 收盘取最后一天（用窗口函数会更精确，但简化处理取 max(last_date) 对应 close）
+                        func.max(DailyQuote.close).label("close"),
+                        func.min(DailyQuote.open).label("open"),
+                    )
+                    .filter(DailyQuote.symbol == symbol)
+                )
+                if start_date:
+                    stmt = stmt.filter(DailyQuote.trade_date >= start_date)
+                if end_date:
+                    stmt = stmt.filter(DailyQuote.trade_date <= end_date)
+                stmt = stmt.group_by("period").order_by("first_date")
+                rows = stmt.all()
+                items = []
+                for row in rows:
+                    # 聚合查询的 row 是 SQLAlchemy Row，使用属性访问
+                    items.append({
+                        "trade_date": row.last_date if freq in ("monthly", "yearly") else row.first_date,
+                        "open": row.open,
+                        "high": row.high,
+                        "low": row.low,
+                        "close": row.close,
+                        "volume": row.volume,
+                        "amount": row.amount,
+                    })
+
+            # 统一转换为最终 JSON 结果
+            data = []
+            for item in items:
+                td = item["trade_date"]
+                data.append({
+                    "trade_date": td.isoformat() if isinstance(td, date) else str(td),
+                    "open": float(item["open"]) if item["open"] is not None else None,
+                    "high": float(item["high"]) if item["high"] is not None else None,
+                    "low": float(item["low"]) if item["low"] is not None else None,
+                    "close": float(item["close"]) if item["close"] is not None else None,
+                    "volume": float(item["volume"]) if item["volume"] is not None else None,
+                    "amount": float(item["amount"]) if item["amount"] is not None else None,
+                })
+
+            return {
+                "symbol": symbol,
+                "freq": freq,
+                "start_date": min(data, key=lambda x: x["trade_date"])["trade_date"] if data else None,
+                "end_date": max(data, key=lambda x: x["trade_date"])["trade_date"] if data else None,
+                "count": len(data),
+                "data": data,
+            }
         finally:
             session.close()

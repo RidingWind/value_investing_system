@@ -6,7 +6,8 @@ backend_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(backend_dir))
 
 import logging
-
+# import asyncio
+# from app.api.v1.search import _load_cache   # 导入预热函数
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -38,6 +39,11 @@ async def lifespan(app: FastAPI):
 
     # 3. 财务子系统
     financial_plugin.init_app(app, infra_config, param_service)
+
+    # # 4. 初始化搜索列表
+    # # 预热股票搜索缓存（异步包装同步任务，避免阻塞事件循环）
+    # loop = asyncio.get_running_loop()
+    # await loop.run_in_executor(None, _load_cache)
 
     yield
 
