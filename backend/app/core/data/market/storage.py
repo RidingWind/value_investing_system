@@ -2,7 +2,7 @@ import logging
 from datetime import date, datetime
 from typing import Optional
 import pandas as pd
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, func
 from sqlalchemy.orm import sessionmaker
 #如果使用pgsql,将sqlit_insert替换成pg_insert
 from sqlalchemy import text
@@ -83,7 +83,7 @@ class DataStorage:
                   VALUES (:symbol, :trade_date, :open, :high, :low, :close, :volume, :amount, :adj_factor, :source, \
                           :created_at) ON CONFLICT (symbol, trade_date) DO NOTHING \
                   """
-            now = datetime.utcnow()
+            now = datetime.now(datatime.UTC)
             count = 0
             for _, row in df.iterrows():
                 params = {
@@ -136,18 +136,25 @@ class DataStorage:
         finally:
             session.close()
 
+    from datetime import date, datetime, timedelta
+    from typing import Optional, List
+    import pandas as pd
+    from sqlalchemy import func
+
     def get_daily_data(self, symbol: str, start_date: date = None, end_date: date = None, freq: str = "daily") -> dict:
         session = self.Session()
         try:
+            # ---------- 查询所有日线数据（用于聚合）----------
+            q = session.query(DailyQuote).filter(DailyQuote.symbol == symbol)
+            if start_date:
+                q = q.filter(DailyQuote.trade_date >= start_date)
+            if end_date:
+                q = q.filter(DailyQuote.trade_date <= end_date)
+            q = q.order_by(DailyQuote.trade_date.asc())
+            daily_rows = q.all()
+
             if freq == "daily":
-                q = session.query(DailyQuote).filter(DailyQuote.symbol == symbol)
-                if start_date:
-                    q = q.filter(DailyQuote.trade_date >= start_date)
-                if end_date:
-                    q = q.filter(DailyQuote.trade_date <= end_date)
-                q = q.order_by(DailyQuote.trade_date.asc())
-                rows = q.all()
-                # 转换为字典
+                # 日线直接转换
                 items = [
                     {
                         "trade_date": r.trade_date,
@@ -157,52 +164,66 @@ class DataStorage:
                         "close": r.close,
                         "volume": r.volume,
                         "amount": r.amount,
-                    }
-                    for r in rows
+                    } for r in daily_rows
                 ]
             else:
-                # 聚合查询
-                trunc_map = {
-                    "weekly": "%Y-%W",
-                    "monthly": "%Y-%m",
-                    "yearly": "%Y",
-                }
-                trunc_format = trunc_map.get(freq, "%Y-%m-%d")
-                stmt = (
-                    session.query(
-                        func.strftime(trunc_format, DailyQuote.trade_date).label("period"),
-                        func.min(DailyQuote.trade_date).label("first_date"),
-                        func.max(DailyQuote.trade_date).label("last_date"),
-                        func.sum(DailyQuote.volume).label("volume"),
-                        func.sum(DailyQuote.amount).label("amount"),
-                        func.max(DailyQuote.high).label("high"),
-                        func.min(DailyQuote.low).label("low"),
-                        # 收盘取最后一天（用窗口函数会更精确，但简化处理取 max(last_date) 对应 close）
-                        func.max(DailyQuote.close).label("close"),
-                        func.min(DailyQuote.open).label("open"),
-                    )
-                    .filter(DailyQuote.symbol == symbol)
-                )
-                if start_date:
-                    stmt = stmt.filter(DailyQuote.trade_date >= start_date)
-                if end_date:
-                    stmt = stmt.filter(DailyQuote.trade_date <= end_date)
-                stmt = stmt.group_by("period").order_by("first_date")
-                rows = stmt.all()
-                items = []
-                for row in rows:
-                    # 聚合查询的 row 是 SQLAlchemy Row，使用属性访问
-                    items.append({
-                        "trade_date": row.last_date if freq in ("monthly", "yearly") else row.first_date,
-                        "open": row.open,
-                        "high": row.high,
-                        "low": row.low,
-                        "close": row.close,
-                        "volume": row.volume,
-                        "amount": row.amount,
-                    })
+                # ---------- Python 端聚合 ----------
+                if not daily_rows:
+                    items = []
+                else:
+                    # 根据 freq 计算每条记录的分组键
+                    def period_key(r, freq_type):
+                        d = r.trade_date
+                        if freq_type == "weekly":
+                            # ISO 周数，为了跨年一致，使用 (iso_year, iso_week)
+                            iso = d.isocalendar()
+                            return f"{iso[0]}-{iso[1]:02d}"
+                        elif freq_type == "monthly":
+                            return d.strftime("%Y-%m")
+                        elif freq_type == "yearly":
+                            return d.strftime("%Y")
+                        else:
+                            return d.isoformat()
 
-            # 统一转换为最终 JSON 结果
+                    grouped = {}
+                    for r in daily_rows:
+                        key = period_key(r, freq)
+                        if key not in grouped:
+                            grouped[key] = {
+                                "first_open": r.open,
+                                "last_close": r.close,
+                                "high": r.high,
+                                "low": r.low,
+                                "volume": r.volume or 0,
+                                "amount": r.amount or 0,
+                                "last_date": r.trade_date,
+                            }
+                        else:
+                            grp = grouped[key]
+                            grp["last_close"] = r.close
+                            grp["high"] = max(grp["high"], r.high) if r.high is not None else grp["high"]
+                            grp["low"] = min(grp["low"], r.low) if r.low is not None else grp["low"]
+                            grp["volume"] += r.volume or 0
+                            grp["amount"] += r.amount or 0
+                            grp["last_date"] = r.trade_date
+
+                    # 转换为列表，使用 last_date 作为图表展示日期
+                    items = [
+                        {
+                            "trade_date": val["last_date"],
+                            "open": val["first_open"],
+                            "high": val["high"],
+                            "low": val["low"],
+                            "close": val["last_close"],
+                            "volume": val["volume"],
+                            "amount": val["amount"],
+                        }
+                        for key, val in grouped.items()
+                    ]
+                    # 按日期排序
+                    items.sort(key=lambda x: x["trade_date"])
+
+            # ---------- 统一输出 ----------
             data = []
             for item in items:
                 td = item["trade_date"]
@@ -212,8 +233,8 @@ class DataStorage:
                     "high": float(item["high"]) if item["high"] is not None else None,
                     "low": float(item["low"]) if item["low"] is not None else None,
                     "close": float(item["close"]) if item["close"] is not None else None,
-                    "volume": float(item["volume"]) if item["volume"] is not None else None,
-                    "amount": float(item["amount"]) if item["amount"] is not None else None,
+                    "volume": float(item["volume"]) if item["volume"] is not None else 0.0,
+                    "amount": float(item["amount"]) if item["amount"] is not None else 0.0,
                 })
 
             return {

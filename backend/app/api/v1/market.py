@@ -157,7 +157,8 @@ async def daily_chart_data(
     symbol: str,
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
+    freq: str = Query("daily"),
     storage = Depends(get_storage)
 ):
-    data = storage.get_daily_data(symbol, start_date, end_date)
+    data = storage.get_daily_data(symbol, start_date, end_date, freq)
     return data
