@@ -4,7 +4,9 @@ from .base import DataSource
 from .tushare_adapter import TushareAdapter
 from .akshare_adapter import AKShareAdapter
 from .baostock_adapter import BaoStockAdapter
+import logging
 
+logger = logging.getLogger(__name__)
 class DataSourceFactory:
     ADAPTERS = {
         "tushare": TushareAdapter,
@@ -16,7 +18,9 @@ class DataSourceFactory:
         self.param_service = param_service
 
     def create_primary(self) -> DataSource:
-        source_name = self.param_service.get("data.primary_source", "akshare")
+        source_name = self.param_service.get("data.primary_source", 'akshare')
+        source_name = 'baostock'
+        logger.info(f"source_name{source_name}")
         return self._create(source_name)
 
     def create_backups(self) -> List[DataSource]:
@@ -24,6 +28,8 @@ class DataSourceFactory:
         return [self._create(name) for name in names]
 
     def _create(self, name: str) -> DataSource:
+        print(f"可用适配器: {list(self.ADAPTERS.keys())}")  # 临时调试
+        print(f"name：{name}")
         adapter_class = self.ADAPTERS.get(name)
         if not adapter_class:
             raise ValueError(f"未知数据源: {name}")

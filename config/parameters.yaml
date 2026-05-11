@@ -7,14 +7,14 @@ parameters:
   description: Tushare API Token
   hot_reloadable: false
 - key: data.primary_source
-  value: akshare
+  value: baostock
   type: str
   scope: technical
   description: 主数据源标识
   hot_reloadable: true
 - key: data.backup_sources
   value:
-  - baostock
+  - akshare
   - tushare
   type: list
   scope: technical

@@ -1,58 +1,112 @@
-# backend/app/api/v1/search.py
-# import os
-# import pickle
-# from datetime import datetime, timedelta
-from fastapi import APIRouter, Query
-import akshare as ak
+from fastapi import APIRouter, Query, HTTPException
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 import pandas as pd
 import logging
-#
-# CACHE_FILE = "data/stock_list_cache.pkl"
-# CACHE_MAX_AGE_HOURS = 24   # 缓存有效期 24 小时
+from datetime import datetime, timedelta
+import akshare as ak
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/search", tags=["搜索"])
 
-# 启动时加载缓存
-_stock_cache: pd.DataFrame = None
+# 数据库连接（复用项目的 engine，这里简单示意）
+from app.config import get_database_url
+engine = create_engine(get_database_url())
+SessionLocal = sessionmaker(bind=engine)
 
-def _get_stock_cache():
-    global _stock_cache
-    if _stock_cache is None:
-        try:
-            # 获取A股实时股票列表 (akshare接口)
-            df = ak.stock_info_a_code_name()
-            # 添加拼音首字母列（需安装 pypinyin）
-            from pypinyin import lazy_pinyin
-            df['pinyin'] = df['name'].apply(lambda x: ''.join([c[0].upper() for c in lazy_pinyin(x)]))
-            _stock_cache = df[['code', 'name', 'pinyin']]
-        except Exception as e:
-            logger.error(f"加载股票列表失败: {e}")
-            _stock_cache = pd.DataFrame(columns=['code', 'name', 'pinyin'])
-    return _stock_cache
+MAX_CACHE_AGE_HOURS = 24
+
+def _fetch_and_store_stock_list():
+    """从 akshare 获取最新股票列表，并全量写入数据库"""
+    try:
+        df = ak.stock_info_a_code_name()
+        from pypinyin import lazy_pinyin
+        df['pinyin'] = df['name'].apply(lambda x: ''.join([c[0].upper() for c in lazy_pinyin(x)]))
+        df['exchange'] = df['code'].apply(lambda x: 'SH' if x.startswith('6') else 'SZ')
+    except Exception as e:
+        logger.error(f"从 akshare 获取股票列表失败: {e}")
+        return False
+
+    session = SessionLocal()
+    try:
+        # 清空旧数据
+        session.execute(text("DELETE FROM stock_list"))
+        for _, row in df.iterrows():
+            session.execute(
+                text("INSERT INTO stock_list (code, name, pinyin, exchange, updated_at) VALUES (:code, :name, :pinyin, :exchange, :now)"),
+                {
+                    "code": row['code'],
+                    "name": row['name'],
+                    "pinyin": row['pinyin'],
+                    "exchange": row['exchange'],
+                    "now": datetime.utcnow()
+                }
+            )
+        session.commit()
+        logger.info(f"股票列表已更新，共 {len(df)} 条")
+        return True
+    except Exception as e:
+        session.rollback()
+        logger.error(f"写入股票列表失败: {e}")
+        return False
+    finally:
+        session.close()
+
+def _get_stock_list_from_db():
+    """从数据库获取股票列表，返回 DataFrame"""
+    session = SessionLocal()
+    try:
+        rows = session.execute(text("SELECT code, name, pinyin, exchange FROM stock_list")).fetchall()
+        if not rows:
+            return pd.DataFrame(columns=['code', 'name', 'pinyin', 'exchange'])
+        return pd.DataFrame(rows, columns=['code', 'name', 'pinyin', 'exchange'])
+    finally:
+        session.close()
+
+def _is_cache_expired():
+    """检查数据库中的列表是否过期（不存在或超过阈值）"""
+    session = SessionLocal()
+    try:
+        row = session.execute(text("SELECT MAX(updated_at) FROM stock_list")).fetchone()
+        if row is None or row[0] is None:
+            return True
+        last_update = row[0]
+        if datetime.utcnow() - last_update > timedelta(hours=MAX_CACHE_AGE_HOURS):
+            return True
+        return False
+    finally:
+        session.close()
+
+# 应用启动时执行一次（通过 FastAPI 的 lifespan 或手动调用）
+async def init_stock_cache():
+    if _is_cache_expired():
+        logger.info("股票列表缓存过期，尝试更新...")
+        success = _fetch_and_store_stock_list()
+        if not success:
+            logger.warning("更新股票列表失败，将使用旧数据（如有）")
+    else:
+        logger.info("股票列表缓存有效")
 
 @router.get("/stocks")
 async def search_stocks(keyword: str = Query(..., min_length=1)):
-    """根据代码、名称或拼音首字母模糊查询A股，返回匹配的股票列表"""
-    cache = _get_stock_cache()
+    """根据代码、名称或拼音首字母模糊查询A股"""
+    cache = _get_stock_list_from_db()
     if cache.empty:
         return []
 
     keyword_upper = keyword.upper()
-    # 匹配条件：代码、名称、拼音首字母包含关键字
     mask = (
         cache['code'].str.contains(keyword_upper, na=False) |
         cache['name'].str.contains(keyword_upper, na=False) |
         cache['pinyin'].str.contains(keyword_upper, na=False)
     )
-    matches = cache[mask].head(20)  # 限制返回数量
+    matches = cache[mask].head(20)
 
     results = []
     for _, row in matches.iterrows():
-        # 转换为标准代码格式（SZ/SH）
         code = row['code']
-        exchange = 'SH' if code.startswith('6') else 'SZ'
+        exchange = row['exchange'] if pd.notna(row['exchange']) else ('SH' if code.startswith('6') else 'SZ')
         standard_code = f"{code}.{exchange}"
         results.append({
             'code': code,
@@ -62,55 +116,11 @@ async def search_stocks(keyword: str = Query(..., min_length=1)):
         })
     return results
 
-# def _is_cache_valid():
-#     if not os.path.exists(CACHE_FILE):
-#         return False
-#     mtime = os.path.getmtime(CACHE_FILE)
-#     age = datetime.now() - datetime.fromtimestamp(mtime)
-#     return age < timedelta(hours=CACHE_MAX_AGE_HOURS)
-#
-#
-# def _load_cache():
-#     global _stock_cache
-#     if _stock_cache is not None:
-#         return _stock_cache
-#
-#     # 1. 尝试从本地文件加载
-#     if _is_cache_valid():
-#         try:
-#             with open(CACHE_FILE, 'rb') as f:
-#                 _stock_cache = pickle.load(f)
-#             logger.info("从本地缓存加载股票列表 (%d 条)", len(_stock_cache))
-#             return _stock_cache
-#         except Exception as e:
-#             logger.warning("本地缓存损坏，重新下载: %s", e)
-#
-#     # 2. 从 akshare 获取最新数据
-#     try:
-#         import akshare as ak
-#         df = ak.stock_info_a_code_name()
-#         # 添加拼音首字母（可选）
-#         try:
-#             from pypinyin import lazy_pinyin
-#             df['pinyin'] = df['name'].apply(lambda x: ''.join([c[0].upper() for c in lazy_pinyin(x)]))
-#         except ImportError:
-#             df['pinyin'] = ''
-#         _stock_cache = df[['code', 'name', 'pinyin']].copy()
-#         logger.info("成功从 akshare 加载股票列表 (%d 条)", len(_stock_cache))
-#
-#         # 保存到本地
-#         os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
-#         with open(CACHE_FILE, 'wb') as f:
-#             pickle.dump(_stock_cache, f)
-#         return _stock_cache
-#     except Exception as e:
-#         logger.error(f"加载股票列表失败: {e}")
-#         _stock_cache = pd.DataFrame(columns=['code', 'name', 'pinyin'])
-#         return _stock_cache
-#
-# @router.post("/stocks/refresh-cache")
-# async def refresh_stock_cache():
-#     global _stock_cache
-#     _stock_cache = None
-#     _load_cache()
-#     return {"message": "缓存已刷新", "count": len(_stock_cache)}
+# 手动刷新缓存的管理接口
+@router.post("/stocks/refresh-cache")
+async def refresh_stock_cache():
+    success = _fetch_and_store_stock_list()
+    if success:
+        return {"message": "股票列表已刷新"}
+    else:
+        raise HTTPException(status_code=502, detail="无法从 akshare 获取最新股票列表")

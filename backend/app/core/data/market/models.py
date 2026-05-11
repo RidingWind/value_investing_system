@@ -4,8 +4,6 @@
 """
 from sqlalchemy import Column, Integer, String, Date, Numeric, DateTime, UniqueConstraint, Index, func
 from sqlalchemy.orm import declarative_base
-from app.utils.sqlite_types import SqliteNumeric
-import decimal
 
 Base = declarative_base()
 

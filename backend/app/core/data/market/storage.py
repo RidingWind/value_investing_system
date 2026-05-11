@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, event, func
 from sqlalchemy.orm import sessionmaker
 #如果使用pgsql,将sqlit_insert替换成pg_insert
 from sqlalchemy import text
+from sqlalchemy.pool import QueuePool
 from app.core.data.market.models import Base, DailyQuote
 logger = logging.getLogger(__name__)
 
@@ -14,15 +15,17 @@ class DataStorage:
 
     def __init__(self, database_url: str):
         self.engine = create_engine(database_url,
-            connect_args={'timeout': 30},  # 遇到锁时等待30秒
-            echo=False
+            connect_args={'connect_timeout': 30},  # 遇到锁时等待30秒
+            echo=False,
+            pool_size=20,
+            max_overflow=10
         )
-        # 启用WAL模式，允许读写并发
-        @event.listens_for(self.engine, "connect")
-        def set_sqlite_pragma(dbapi_connection, connection_record):
-            cursor = dbapi_connection.cursor()
-            cursor.execute("PRAGMA journal_mode=WAL;")
-            cursor.close()
+        # # 启用WAL模式，允许读写并发
+        # @event.listens_for(self.engine, "connect")
+        # def set_sqlite_pragma(dbapi_connection, connection_record):
+        #     cursor = dbapi_connection.cursor()
+        #     cursor.execute("PRAGMA journal_mode=WAL;")
+        #     cursor.close()
 
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)

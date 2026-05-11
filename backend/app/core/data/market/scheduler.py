@@ -29,11 +29,6 @@ class DataScheduler:
         self.scheduler.start()
         logger.info("数据调度器已启动")
 
-    # def trigger_market_fetch(self, trade_date: Optional[datetime.date] = None):
-    #     """手动触发行情采集，返回 DataFrame"""
-    #     symbols = self.data_source.get_all_symbols()
-    #     return self.do_market_fetch(trade_date, symbols, triggered_by="manual")
-
     def _scheduled_market_fetch(self):
         """定时任务入口"""
         symbols = self.data_source.get_all_symbols()
@@ -96,19 +91,9 @@ class DataScheduler:
         end_date = date.today()
         start_date = end_date - timedelta(days=days_back)
 
-        current_date = start_date
-        total_stored = 0
-        while current_date <= end_date:
-            if current_date.weekday() < 5:  # 跳过周末
-                try:
-                    df = self.do_market_fetch(current_date, symbols, triggered_by="incremental")
-                    total_stored += len(df) if df is not None else 0
-                except Exception as e:
-                    logger.warning(f"增量采集 {current_date} 失败: {e}")
-            current_date += timedelta(days=1)
-
-        logger.info(f"增量采集完成，共获取 {total_stored} 条历史数据")
-        return total_stored
+        df = self.do_market_fetch(symbols, start_date, end_date,"incremental")
+        logger.info(f"增量采集完成，共获取 {len(df)} 条历史数据")
+        return df
 
     def get_recent_logs(self, limit: int = 20) -> List[Dict]:
         """返回最近的采集日志"""

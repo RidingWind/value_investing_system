@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+from app.api.v1.search import init_stock_cache
+
 # 将 backend 目录加入 sys.path，确保 app 包能被找到
 backend_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(backend_dir))
@@ -40,10 +42,7 @@ async def lifespan(app: FastAPI):
     # 3. 财务子系统
     financial_plugin.init_app(app, infra_config, param_service)
 
-    # # 4. 初始化搜索列表
-    # # 预热股票搜索缓存（异步包装同步任务，避免阻塞事件循环）
-    # loop = asyncio.get_running_loop()
-    # await loop.run_in_executor(None, _load_cache)
+    await init_stock_cache()
 
     yield
 
