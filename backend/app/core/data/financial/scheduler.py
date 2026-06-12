@@ -24,6 +24,11 @@ class FinancialScheduler:
             num_quarters = self.MAX_RECENT_PERIODS
         periods = self._get_recent_periods(num_quarters)
 
+        # 统计各报表组存储数量
+        stored_by_group = {"income": 0, "balance": 0, "cashflow": 0, "indicator": 0}
+        # 明细列表：存储成功的每一条指标记录（窄表行）
+        indicator_details = []
+
         total_stored = 0
         for period in periods:
             try:
@@ -35,7 +40,26 @@ class FinancialScheduler:
                     # 确保 end_date 类型为 date
                     # narrow_df['end_date'] = pd.to_datetime(narrow_df['end_date']).dt.date
                     stored = self.storage.save_indicator_data(narrow_df)
-                    total_stored += stored
+                    # 收集明细：将窄表转换为字典列表，按 report_group 统计
+                    for _, row in narrow_df.iterrows():
+                        group = row['report_group']
+                        if group in stored_by_group:
+                            stored_by_group[group] += 1
+                        else:
+                            stored_by_group[group] = 1
+                        indicator_details.append({
+                            'symbol': symbol,
+                            'end_date': str(row['end_date']),
+                            'report_group': group,
+                            'indicator_name': row['indicator_name'],
+                            'value': str(row['value']),
+                            'source': row.get('source', '')
+                        })
+                    self._fetch_logs.append({
+                        'symbol': symbol,
+                        'period': period,
+                        'stored': stored
+                    })
             except Exception as e:
                 logger.warning(f"{symbol} {period} 采集失败: {e}")
 
@@ -48,50 +72,11 @@ class FinancialScheduler:
         self._fetch_logs.insert(0, log_entry)
         if len(self._fetch_logs) > 50:
             self._fetch_logs = self._fetch_logs[:50]
-        return {"total_stored": total_stored}
-
-    # def fetch_one_stock(self, symbol: str, num_quarters: int = None) -> dict:
-    #     if num_quarters is None:
-    #         num_quarters = self.MAX_RECENT_PERIODS
-    #     periods = self._get_recent_periods(num_quarters)
-    #
-    #     total_stored = 0
-    #     for period in periods:
-    #         try:
-    #             all_indicators = self.storage.get_all_indicators()
-    #             # logger.info(f"all_ind:{all_indicators}")
-    #             df = self.adapter.fetch_indicators(all_indicators, symbol, period)
-    #             # logger.info(f"df:{df}")
-    #             if df is not None and not df.empty:
-    #                 rows = []
-    #                 for _, row in df.iterrows():
-    #                     for ind in all_indicators:
-    #                         val = row.get(ind.standard_field)
-    #                         if val is not None:
-    #                             rows.append({
-    #                                 'symbol': symbol,
-    #                                 'end_date': datetime.datetime.strptime(period, '%Y%m%d').date(),
-    #                                 'report_group': ind.report_group,
-    #                                 'indicator_name': ind.standard_field,
-    #                                 'value': str(val)  # 统一字符串
-    #                             })
-    #                 if rows:
-    #                     narrow_df = pd.DataFrame(rows)
-    #                     stored = self.storage.save_financial_data_batch(narrow_df)
-    #                     total_stored += stored
-    #         except Exception as e:
-    #             logger.warning(f"{symbol} {period} 采集失败: {e}")
-    #
-    #     log_entry = {
-    #         "symbol": symbol,
-    #         "periods": len(periods),
-    #         "stored": total_stored,
-    #         "timestamp": datetime.datetime.now().isoformat(),
-    #     }
-    #     self._fetch_logs.insert(0, log_entry)
-    #     if len(self._fetch_logs) > 50:
-    #         self._fetch_logs = self._fetch_logs[:50]
-    #     return {"total_stored": total_stored}
+        return {
+            "total_stored": sum(stored_by_group.values()),
+            "stored_by_group": stored_by_group,
+            "indicator_details": indicator_details
+        }
 
     def get_recent_logs(self, limit: int = 20) -> List[Dict]:
         return self._fetch_logs[:limit]

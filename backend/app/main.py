@@ -1,12 +1,15 @@
 import sys
 from pathlib import Path
 
+from app.api.v1.search import init_stock_cache
+
 # 将 backend 目录加入 sys.path，确保 app 包能被找到
 backend_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(backend_dir))
 
 import logging
-
+# import asyncio
+# from app.api.v1.search import _load_cache   # 导入预热函数
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -15,6 +18,7 @@ from app.core.config import load_infra_config
 from app.core.plugins.param_plugin import ParamPlugin
 from app.core.plugins.market_plugin import MarketPlugin
 from app.core.plugins.financial_plugin import FinancialPlugin
+from app.api.v1.search import router as search_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -38,6 +42,8 @@ async def lifespan(app: FastAPI):
     # 3. 财务子系统
     financial_plugin.init_app(app, infra_config, param_service)
 
+    await init_stock_cache()
+
     yield
 
 app = FastAPI(title="价值投资自动化选股系统", version="3.0", lifespan=lifespan)
@@ -50,6 +56,8 @@ app.add_middleware(  # type: ignore[arg-type]
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(search_router, prefix="/api/v1")
 
 # 注册路由
 param_plugin.register_routers(app)

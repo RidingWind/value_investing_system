@@ -15,8 +15,26 @@
     <!-- 2. 股票数据范围查询 -->
     <el-card class="mt-20">
       <template #header>查询股票数据区间</template>
-      <el-input v-model="querySymbol" placeholder="输入股票代码（如000001.SZ）" clearable @keyup.enter="searchRange" style="width: 300px;" @input="querySymbol = querySymbol.toUpperCase()" />
-      <el-button type="primary" @click="searchRange" class="ml-10">查询</el-button>
+      <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+        <el-autocomplete
+          v-model="querySymbol"
+          :fetch-suggestions="searchStocks"
+          placeholder="输入代码/名称/拼音"
+          clearable
+          style="width: 300px;"
+          @select="handleSelectStock"
+          @input="querySymbol = querySymbol.toUpperCase()"
+        >
+          <template #default="{ item }">
+            <div class="stock-suggestion">
+              <span class="code">{{ item.standard_code }}</span>
+              <span class="name">{{ item.name }}</span>
+            </div>
+          </template>
+        </el-autocomplete>
+        <el-button type="primary" @click="searchRange" class="ml-10">查询区间</el-button>
+        <el-button type="success" @click="goToDailyChart">查询日线</el-button>
+      </div>
       <div v-if="rangeResult" class="range-info mt-10">
         <p>代码：{{ rangeResult.symbol }}</p>
         <p>数据区间：{{ rangeResult.start_date }} 至 {{ rangeResult.end_date }}</p>
@@ -28,12 +46,7 @@
     <el-card class="mt-20">
       <template #header>手动补全行情</template>
       <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center;">
-        <el-input
-          v-model="fetchSymbols"
-          placeholder="股票代码列表，逗号分隔（如 000001.SZ,600000.SH）"
-          style="width: 320px;"
-          clearable @input="querySymbol = querySymbol.toUpperCase()"
-        />
+        <StockMultiSelect v-model="fetchSymbols" style="width: 400px" />
         <el-date-picker
           v-model="fetchDateRange"
           type="daterange"
@@ -72,9 +85,11 @@
 </template>
 
 <script setup>
+import StockMultiSelect from '@/components/StockMultiSelect.vue'
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router' // 若放在<script setup>中，可直接 import
 
 // 数据总览
 const summaryCards = ref([])
@@ -90,6 +105,47 @@ const loadSummary = async () => {
   } catch { ElMessage.error('加载总览失败') }
 }
 
+const router = useRouter()
+
+// 搜索建议函数
+const searchStocks = async (queryString, callback) => {
+  if (!queryString || queryString.length < 1) {
+    callback([])
+    return
+  }
+  try {
+    const { data } = await axios.get('/api/v1/search/stocks', {
+      params: { keyword: queryString }
+    })
+    // data 格式：[{ code, standard_code, name, pinyin }]
+    const suggestions = data.map(item => ({
+      value: item.standard_code,  // 选中的值
+      standard_code: item.standard_code,
+      name: item.name
+    }))
+    callback(suggestions)
+  } catch {
+    callback([])
+  }
+}
+
+// 选中建议项时触发，可以自动填充并直接查询
+const handleSelectStock = (item) => {
+  querySymbol.value = item.standard_code
+  // 可选：自动触发查询区间
+  // searchRange()
+}
+
+// 新增：跳转到日线行情页面
+const goToDailyChart = () => {
+  if (!querySymbol.value) {
+    ElMessage.warning('请选择股票代码')
+    return
+  }
+  // 假设日线页面路由为 /stock/daily?symbol=000001.SZ
+  router.push({ path: '/stock/daily', query: { symbol: querySymbol.value } })
+}
+
 // 股票区间查询
 const querySymbol = ref('')
 const rangeResult = ref(null)
@@ -102,13 +158,16 @@ const searchRange = async () => {
 }
 
 // 手动补全
-const fetchSymbols = ref('')
+const fetchSymbols = ref([])
 const fetchDateRange = ref([])
 const fetching = ref(false)
 const fetchResult = ref('')
 const triggerFetch = async () => {
-  if (!fetchSymbols.value) { ElMessage.warning('请输入股票代码'); return }
-  const symbols = fetchSymbols.value.split(',').map(s => s.trim())
+  const symbols = fetchSymbols.value
+  if (!symbols.length) {
+    ElMessage.warning('请选择股票')
+    return
+  }
   const payload = { symbols }
   if (fetchDateRange.value && fetchDateRange.value.length === 2) {
     payload.start_date = fetchDateRange.value[0]
@@ -149,4 +208,16 @@ onMounted(() => {
 .ml-10 { margin-left: 10px; }
 .card-value { font-size: 24px; font-weight: bold; color: #409eff; }
 .range-info p { margin: 5px 0; }
+.stock-suggestion {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+}
+.stock-suggestion .code {
+  font-weight: bold;
+  margin-right: 10px;
+}
+.stock-suggestion .name {
+  color: #666;
+}
 </style>

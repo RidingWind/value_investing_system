@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 from datetime import date
-
+from app.core.data.financial.dynamic_adapter import DynamicFinancialAdapter
 from app.core.data.financial.storage import FinancialStorage
 from app.core.data.financial.scheduler import FinancialScheduler
 
@@ -15,6 +15,8 @@ def get_storage(request: Request) -> FinancialStorage:
 def get_scheduler(request: Request) -> FinancialScheduler:
     return request.app.state.financial_scheduler
 
+def get_adapter(request: Request):
+    return request.app.state.financial_adapter
 
 # ---------- 响应模型 ----------
 class SummaryOut(BaseModel):
@@ -63,15 +65,35 @@ async def financial_summary(storage=Depends(get_storage)):
     }
 
 @router.post("/fetch")
-async def fetch_financials(req: FetchRequest, scheduler=Depends(get_scheduler)):
+async def trigger_fetch(request: FetchRequest, storage=Depends(get_storage), adapter=Depends(get_adapter)):
+    # 假设 scheduler 已通过 state 获取
+    scheduler = FinancialScheduler(adapter, storage)
     details = []
-    for sym in req.symbols:
-        try:
-            result = scheduler.fetch_one_stock(sym, req.quarters)
-            details.append({"symbol": sym, "status": "success", "stored": result["total_stored"]})
-        except Exception as e:
-            details.append({"symbol": sym, "status": "error", "error": str(e)})
-    return {"message": f"采集完成", "details": details}
+    for sym in request.symbols:
+        res = scheduler.fetch_one_stock(sym, request.quarters)
+        details.append({
+            "symbol": sym,
+            "status": "success" if res["total_stored"] > 0 else "no_data",
+            "income": res["stored_by_group"].get("income", 0),
+            "balance": res["stored_by_group"].get("balance", 0),
+            "cashflow": res["stored_by_group"].get("cashflow", 0),
+            "indicator": res["stored_by_group"].get("indicator", 0),
+            "indicator_details": res["indicator_details"],  # 明细
+            "error": ""
+        })
+    return {
+        "message": f"采集完成，共处理 {len(request.symbols)} 只股票",
+        "details": details
+    }
+# async def fetch_financials(req: FetchRequest, scheduler=Depends(get_scheduler)):
+#     details = []
+#     for sym in req.symbols:
+#         try:
+#             result = scheduler.fetch_one_stock(sym, req.quarters)
+#             details.append({"symbol": sym, "status": "success", "stored": result["total_stored"]})
+#         except Exception as e:
+#             details.append({"symbol": sym, "status": "error", "error": str(e)})
+#     return {"message": f"采集完成", "details": details}
 
 @router.get("/logs", response_model=List[LogEntry])
 async def fetch_logs(

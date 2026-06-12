@@ -28,11 +28,17 @@
                   <el-input v-model="currentIndicator.unit" />
                 </el-form-item>
                 <el-form-item label="报表分组">
-                  <el-select v-model="currentIndicator.report_group">
-                    <el-option label="利润表" value="income" />
-                    <el-option label="资产负债表" value="balance" />
-                    <el-option label="现金流量表" value="cashflow" />
-                    <el-option label="主要财务指标" value="indicator" />
+                  <el-select
+                    v-model="currentIndicator.report_group"
+                    allow-create
+                    filterable
+                  >
+                    <el-option
+                      v-for="group in reportGroupOptions"
+                      :key="group"
+                      :label="group"
+                      :value="group"
+                    />
                   </el-select>
                 </el-form-item>
                 <el-form-item label="计算公式" class="formula-editor">
@@ -43,6 +49,45 @@
                       {{ dep.function_name }}.{{ dep.column_name }}
                     </el-tag>
                     <span v-if="formulaDeps.length === 0" style="color: #999">无</span>
+                  </div>
+                </el-form-item>
+                <el-form-item label="依赖绑定">
+                  <div>
+                    <el-button type="info" size="small" @click="addDepRow">添加依赖</el-button>
+                    <div v-for="(dep, idx) in currentDeps" :key="idx" style="display:flex; align-items:center; margin-top:5px;">
+                      <el-select
+                        v-model="dep.api_id"
+                        placeholder="选择API"
+                        size="small"
+                        style="width:200px;"
+                        filterable
+                        @change="onDepApiChange(idx)"
+                      >
+                        <el-option
+                          v-for="api in availableApis"
+                          :key="api.id"
+                          :label="api.function_name + (api.chinese_name ? ' (' + api.chinese_name + ')' : '')"
+                          :value="api.id"
+                          :disabled="!api.output_columns || api.output_columns.length === 0"
+                        />
+                      </el-select>
+                      <span style="margin: 0 8px;">.</span>
+                      <el-select
+                        v-model="dep.column_name"
+                        placeholder="选择列"
+                        size="small"
+                        style="width:200px;"
+                        filterable
+                      >
+                        <el-option
+                          v-for="col in getApiColumns(dep.api_id)"
+                          :key="col"
+                          :label="col"
+                          :value="col"
+                        />
+                      </el-select>
+                      <el-button type="danger" size="small" :icon="Delete" circle @click="removeDepRow(idx)" style="margin-left:8px;" />
+                    </div>
                   </div>
                 </el-form-item>
                 <el-form-item>
@@ -63,10 +108,34 @@
           <el-table-column prop="function_name" label="函数名" width="200" />
           <el-table-column prop="chinese_name" label="中文名" />
           <el-table-column prop="source" label="数据源" width="100" />
-          <el-table-column label="操作" width="200">
+          <el-table-column label="输入参数" width="200">
+            <template #default="{ row }">
+              <el-popover placement="bottom" trigger="hover" :width="300">
+                <pre style="max-height:200px;overflow:auto">{{ JSON.stringify(row.input_params, null, 2) }}</pre>
+                <template #reference>
+                  <span class="param-preview">{{ JSON.stringify(row.input_params) }}</span>
+                </template>
+              </el-popover>
+            </template>
+          </el-table-column>
+          <el-table-column label="输出列" min-width="250">
+            <template #default="{ row }">
+              <template v-if="row.output_columns && row.output_columns.length">
+                <el-tag
+                  v-for="col in row.output_columns"
+                  :key="col"
+                  size="small"
+                  style="margin-right:4px;margin-bottom:4px;"
+                >{{ col }}</el-tag>
+              </template>
+              <span v-else style="color: #999">未获取</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="260">
             <template #default="scope">
               <el-button size="small" @click="editApi(scope.row)">编辑</el-button>
               <el-button size="small" type="danger" @click="deleteApi(scope.row.id)">删除</el-button>
+              <el-button size="small" type="primary" @click="refreshApiColumns(scope.row)">刷新列</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -134,9 +203,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete } from '@element-plus/icons-vue'
 
 const activeTab = ref('indicators')
 const apiList = ref([])
@@ -149,6 +219,8 @@ const selectedApiId = ref(null)
 const affectedIndicators = ref([])
 const selectedIndicatorId = ref(null)
 const indicatorDeps = ref([])
+// 当前编辑指标的依赖列表
+const currentDeps = ref([])
 
 const addApiDialog = ref(false)
 const apiForm = ref({
@@ -167,6 +239,17 @@ const reportGroupName = {
   cashflow: '现金流量表',
   indicator: '主要财务指标'
 }
+
+// 从已加载的指标列表中提取所有分组，去重后排序
+const reportGroupOptions = computed(() => {
+  const groups = allIndicators.value.map(ind => ind.report_group).filter(Boolean)
+  return [...new Set(groups)].sort()
+})
+
+// 所有已注册的 API（用于下拉选择）
+const availableApis = computed(() => {
+  return apiList.value
+})
 
 // ---------- 加载数据 ----------
 const loadApis = async () => {
@@ -196,7 +279,43 @@ const handleTreeClick = (node) => {
   if (node.data) {
     currentIndicator.value = {...node.data}
     parseFormulaDeps()
+    loadCurrentDeps(node.data.id)   // 新增：加载依赖
   }
+}
+
+// 加载指标的现有依赖
+const loadCurrentDeps = async (indicatorId) => {
+  if (!indicatorId) return
+  try {
+    const { data } = await axios.get(`/api/v1/financial/config/indicators/${indicatorId}/deps`)
+    // 后端返回 [{function_name, column_name, api_id}, ...]
+    currentDeps.value = data.map(d => ({
+      api_id: d.api_id,
+      column_name: d.column_name
+    }))
+  } catch {
+    currentDeps.value = []
+  }
+}
+
+// 添加依赖行
+const addDepRow = () => {
+  currentDeps.value.push({ api_id: null, column_name: '' })
+}
+
+// 删除依赖行
+const removeDepRow = (idx) => {
+  currentDeps.value.splice(idx, 1)
+}
+// 根据 api_id 获取该 API 的输出列
+const getApiColumns = (apiId) => {
+  const api = availableApis.value.find(a => a.id === apiId)
+  return api?.output_columns || []
+}
+
+// 当 API 改变时，清空已选的列
+const onDepApiChange = (idx) => {
+  currentDeps.value[idx].column_name = ''
 }
 
 const parseFormulaDeps = () => {
@@ -218,7 +337,11 @@ watch(() => currentIndicator.value?.formula, parseFormulaDeps)
 
 const saveIndicator = async () => {
   try {
-    await axios.post('/api/v1/financial/config/indicators', currentIndicator.value)
+    const payload = {
+      ...currentIndicator.value,
+      deps: currentDeps.value.filter(d => d.api_id && d.column_name)  // 只提交有效的依赖
+    }
+    await axios.post('/api/v1/financial/config/indicators', payload)
     ElMessage.success('保存成功')
     loadIndicators()
   } catch (e) {
@@ -245,9 +368,20 @@ const addIndicator = () => {
     report_group: 'indicator',
     formula: ''
   }
+  currentDeps.value = []   // 重置依赖
 }
 
 // ---------- API 操作 ----------
+const refreshApiColumns = async (apiRow) => {
+  try {
+    const { data } = await axios.post(`/api/v1/financial/config/apis/${apiRow.id}/refresh-columns`)
+    apiRow.output_columns = data.columns   // 直接更新本地数组
+    ElMessage.success(`成功获取 ${data.columns.length} 列`)
+  } catch (e) {
+    ElMessage.error('获取列失败: ' + (e.response?.data?.detail || e.message))
+  }
+}
+
 const editApi = (row) => {
   apiForm.value = {...row, input_params_str: JSON.stringify(row.input_params)}
   addApiDialog.value = true
@@ -320,5 +454,14 @@ onMounted(() => {
   margin-top: 8px;
   font-size: 12px;
   color: #666;
+}
+.param-preview {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+  display: inline-block;
+  cursor: pointer;
+  color: #409eff;
 }
 </style>

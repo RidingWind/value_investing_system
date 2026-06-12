@@ -1,5 +1,5 @@
 import pandas as pd
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import List, Optional
 import tushare as ts
 
@@ -16,35 +16,47 @@ class TushareAdapter(DataSource):
         self.source_name = "tushare"
         self._stock_basic_available = None  # 缓存权限检测结果
 
-    def fetch_daily_quote(self, symbols: List[str], trade_date: Optional[date] = None) -> pd.DataFrame:
+    def fetch_daily_quote(
+            self,
+            symbols: List[str],
+            start_date: Optional[date] = None,
+            end_date: Optional[date] = None
+    ) -> pd.DataFrame:
         # 将 symbols 转换为 ts_code 列表（若已带后缀则直接使用）
         tscodes = [s if '.' in s else self._symbol_to_tscode(s) for s in symbols]
 
-        if trade_date is None:
-            trade_date = date.today()
-        date_str = trade_date.strftime('%Y%m%d')
+        # 处理默认值
+        sd = start_date if start_date is not None else date.today()
+        ed = end_date if end_date is not None else sd
+        start_str = sd.strftime('%Y%m%d')
 
+        df_accum = pd.DataFrame()
         # 调用 daily 接口，指定前复权
-        df = self.pro.daily(ts_code=','.join(tscodes), trade_date=date_str, adj='qfq')
-        if df is None or df.empty:
-            return pd.DataFrame(columns=STANDARD_COLUMNS + ['adj_factor'])
+        while sd <= ed:
+            df = self.pro.daily(ts_code=','.join(tscodes), trade_date=start_str, adj='qfq')
+            if df is None or df.empty:
+                continue
 
-        # 字段映射
-        df = df.rename(columns={
-            'ts_code': 'symbol',
-            'open': 'open',
-            'high': 'high',
-            'low': 'low',
-            'close': 'close',
-            'vol': 'volume',
-            'amount': 'amount'
-        })
-        df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
-        # 添加复权因子（Tushare 的 daily 接口不直接提供，暂设为1.0）
-        df['adj_factor'] = 1.0
-        # 保持标准列顺序
-        df = df[STANDARD_COLUMNS + ['adj_factor']]
-        return df
+            # 字段映射
+            df = df.rename(columns={
+                'ts_code': 'symbol',
+                'open': 'open',
+                'high': 'high',
+                'low': 'low',
+                'close': 'close',
+                'vol': 'volume',
+                'amount': 'amount'
+            })
+            df['trade_date'] = pd.to_datetime(df['trade_date']).dt.date
+            # 添加复权因子（tushare 的 daily 接口不直接提供，暂设为1.0）
+            df['adj_factor'] = 1.0
+            df['source'] = self.source_name
+            # 保持标准列顺序
+            df = df[STANDARD_COLUMNS + ['adj_factor'] + ['source']]
+            sd = sd + timedelta(days=1)
+            start_str = sd.strftime('%Y%m%d')
+            df_accum = df_accum.append(df, ignore_index=True)
+        return df_accum
 
     def get_all_symbols(self) -> List[str]:
         """
@@ -84,7 +96,7 @@ class TushareAdapter(DataSource):
 
             df = self.pro.daily(
                 ts_code='000001.SZ',
-                trade_date=test_date.strftime('%Y%m%d')
+                trade_date=test_date.strftime('%Y-%m-%d')
             )
             # 能正常返回即可（即使是空 DataFrame 也说明接口连通）
             return df is not None
@@ -95,7 +107,8 @@ class TushareAdapter(DataSource):
     def get_source_name(self) -> str:
         return self.source_name
 
-    def _symbol_to_tscode(self, symbol: str) -> str:
+    @staticmethod
+    def _symbol_to_tscode(symbol: str) -> str:
         """转换代码格式：000001 -> 000001.SZ"""
         if '.' in symbol:
             return symbol

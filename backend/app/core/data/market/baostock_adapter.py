@@ -50,36 +50,38 @@ class BaoStockAdapter(DataSource):
         return 'sz.' + symbol
 
     # ---------- 核心接口实现 ----------
-    def fetch_daily_quote(self, symbols: List[str], trade_date: Optional[date] = None) -> pd.DataFrame:
+    def fetch_daily_quote(
+            self,
+            symbols: List[str],
+            start_date: Optional[date] = None,
+            end_date: Optional[date] = None
+    ) -> pd.DataFrame:
         self._login()
-        if trade_date is None:
-            trade_date = date.today()
-        date_str = trade_date.strftime('%Y-%m-%d')
+        # 处理默认值
+        sd = start_date if start_date is not None else date.today()
+        ed = end_date if end_date is not None else sd
+        start_str = sd.strftime('%Y-%m-%d')
+        end_str = ed.strftime('%Y-%m-%d')
 
         all_frames = []
         for sym in symbols:
             std_symbol = self._to_standard(sym)       # 统一成 600000.SH 格式
             baostock_code = self._to_baostock(std_symbol)  # 转成 sh.600000 用于查询
-            try:
-                rs = bs.query_history_k_data_plus(
-                    baostock_code,
-                    "date,open,high,low,close,volume,amount",
-                    start_date=date_str,
-                    end_date=date_str,
-                    frequency="d",
-                    adjustflag="2"      # 前复权
-                )
-                if rs.error_code != '0':
-                    continue
-                data_list = []
-                while rs.next():
-                    data_list.append(rs.get_row_data())
-                if data_list:
-                    df_part = pd.DataFrame(data_list, columns=['date', 'open', 'high', 'low', 'close', 'volume', 'amount'])
-                    df_part['symbol'] = std_symbol
-                    all_frames.append(df_part)
-            except Exception:
-                continue
+            rs = bs.query_history_k_data_plus(
+                baostock_code,
+                "date,open,high,low,close,volume,amount",
+                start_date=start_str,
+                end_date=end_str,
+                frequency="d",
+                adjustflag="2"      # 前复权
+            )
+            data_list = []
+            while rs.next():
+                data_list.append(rs.get_row_data())
+            if data_list:
+                df_part = pd.DataFrame(data_list, columns=['date', 'open', 'high', 'low', 'close', 'volume', 'amount'])
+                df_part['symbol'] = std_symbol
+                all_frames.append(df_part)
 
         if not all_frames:
             return pd.DataFrame(columns=STANDARD_COLUMNS + ['adj_factor'])
@@ -91,7 +93,8 @@ class BaoStockAdapter(DataSource):
             df[col] = pd.to_numeric(df[col], errors='coerce')
         # 添加复权因子（baostock 不直接提供，暂设为1.0）
         df['adj_factor'] = 1.0
-        df = df[STANDARD_COLUMNS + ['adj_factor']]
+        df['source'] = self.source_name
+        df = df[STANDARD_COLUMNS + ['adj_factor'] + ['source']]
         return df
 
     def get_all_symbols(self) -> List[str]:

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
-from datetime import date, timedelta
+from datetime import date
 
 from app.core.data.market.storage import DataStorage
 from app.core.data.market.scheduler import DataScheduler
@@ -56,61 +56,75 @@ class FetchRequest(BaseModel):
     end_date: Optional[date] = None
 
 # ---------- 数据源状态 ----------
-@router.get("/status", response_model=StatusResponse)
+_HEALTH_TIMEOUT = 5  # 每个数据源健康检查的超时时间（秒）
+
+
+def _safe_check_health(source) -> bool:
+    """在独立线程中检查健康，超时返回 False"""
+    import threading
+
+    result = {"ok": False}
+
+    def _run():
+        try:
+            result["ok"] = bool(source.check_health())
+        except Exception:
+            result["ok"] = False
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(_HEALTH_TIMEOUT)
+    if t.is_alive():
+        return False
+    return result["ok"]
+
+
+@router.get("/status")
 async def get_status(
     data_source=Depends(get_data_source),
-    scheduler=Depends(get_scheduler)
+    scheduler=Depends(get_scheduler),
 ):
     """获取各数据源健康状态"""
     primary = data_source.primary
     backups = data_source.backups
 
-    primary_status = SourceStatus(
-        name=primary.get_source_name(),
-        healthy=primary.check_health(),
-        last_fetch=str(scheduler._last_market_fetch) if scheduler._last_market_fetch else None
-    )
+    primary_status = {
+        "name": primary.get_source_name(),
+        "healthy": _safe_check_health(primary),
+        "last_fetch": str(scheduler.last_market_fetch) if scheduler.last_market_fetch else None,
+    }
 
     backup_statuses = []
     for backup in backups:
         backup_statuses.append(
-            SourceStatus(
-                name=backup.get_source_name(),
-                healthy=backup.check_health(),
-                last_fetch=None
-            )
+            {
+                "name": backup.get_source_name(),
+                "healthy": _safe_check_health(backup),
+                "last_fetch": None,
+            }
         )
 
-    return StatusResponse(primary=primary_status, backups=backup_statuses)
+    return {"primary": primary_status, "backups": backup_statuses}
 
-# ---------- 手动触发采集 ----------
-@router.post("/trigger")
-async def trigger_market_fetch(
-    req: TriggerMarketRequest = None,
-    scheduler=Depends(get_scheduler)
-):
-    """手动触发一次当日行情采集"""
-    try:
-        trade_date = None
-        if req and req.trade_date:
-            from datetime import datetime
-            trade_date = datetime.strptime(req.trade_date, "%Y-%m-%d").date()
-        logger.info(f"开始采集行情，日期：{trade_date}")
-        df = scheduler.trigger_market_fetch(trade_date)
-        return {"message": f"采集成功，获取 {len(df)} 条记录"}
-    except Exception as e:
-        logger.exception("行情采集失败")
-        raise HTTPException(status_code=500, detail=str(e))
 
 # ---------- 股票列表 ----------
-@router.get("/symbols", response_model=SymbolListResponse)
+@router.get("/symbols")
 async def get_symbols(data_source=Depends(get_data_source)):
-    """获取可用股票列表"""
-    try:
-        symbols = data_source.get_all_symbols()
-        return SymbolListResponse(count=len(symbols), symbols=symbols[:100])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """获取可用股票列表（带超时保护）"""
+    import threading
+
+    symbols = []
+
+    def _run():
+        try:
+            symbols.extend(list(data_source.get_all_symbols() or []))
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(10)
+    return {"count": len(symbols), "symbols": symbols[:200]}
 
 # ---------- 行情数据总览 ----------
 @router.get("/summary", response_model=SummaryOut)
@@ -133,20 +147,14 @@ async def fetch_data(req: FetchRequest, scheduler=Depends(get_scheduler)):
     """手动触发指定股票和时间区间的行情采集"""
     if not req.symbols:
         raise HTTPException(status_code=400, detail="股票列表不能为空")
-    start = req.start_date or date.today().replace(day=1)
+    start = req.start_date or date.today()
     end = req.end_date or date.today()
 
-    total = 0
-    current = start
-    while current <= end:
-        if current.weekday() < 5:
-            try:
-                df = scheduler._do_market_fetch(current, req.symbols, triggered_by="manual_partial")
-                total += len(df) if df is not None else 0
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"{current} 采集失败: {e}")
-        current += timedelta(days=1)
-    return {"message": f"采集完成，共获取 {total} 条记录"}
+    try:
+        df = scheduler.do_market_fetch(req.symbols,start, end, "manual")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{req.symbols}:{start}-{end} 采集失败: {e}")
+    return {"message": f"采集完成，共获取 {len(df)} 条记录"}
 
 # ---------- 采集日志 ----------
 @router.get("/logs")
@@ -157,3 +165,14 @@ async def get_fetch_logs(
     """获取最近的行情采集日志"""
     logs = scheduler.get_recent_logs(limit)
     return {"logs": logs}
+
+@router.get("/daily/{symbol}")
+async def daily_chart_data(
+    symbol: str,
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    freq: str = Query("daily"),
+    storage = Depends(get_storage)
+):
+    data = storage.get_daily_data(symbol, start_date, end_date, freq)
+    return data

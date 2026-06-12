@@ -1,8 +1,9 @@
 # 系统基础设施配置文件（启动时加载，修改后需重启服务）
 database:
   # 统一数据库配置（SQLite 或 PostgreSQL），用于日线数据持久化
-  url: "sqlite:///./data/vinvest.db"        # 开发环境用 SQLite
-  # url: "postgresql://user:pass@localhost/vinvest"   # 生产环境
+#  url: "sqlite:///./data/vinvest.db"        # 开发环境用 SQLite
+   url: "sqlite:///./data/vinvest.db"        # 开发环境用 SQLite
+#  url: "postgresql://postgres:sjskkjss@localhost:5432/value_investing"   # 生产环境
 
 redis:
   host: localhost

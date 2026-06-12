@@ -47,3 +47,8 @@ class ParameterService(ABC):
     def get_history(self, key: str, limit: int = 50) -> List[Dict]:
         """获取参数的变更历史（最近 N 条）"""
         pass
+
+    @abstractmethod
+    def list_all_audit_logs(self) -> List[Dict]:
+        """获取全部审计日志（按时间倒序），供 audit API 使用。"""
+        pass

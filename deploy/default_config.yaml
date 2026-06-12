@@ -1,0 +1,24 @@
+# ============================================================
+# 生产环境默认配置（覆盖 config/default_config.yaml）
+# 路径：/opt/vinvest/config/default_config.yaml
+# ============================================================
+
+database:
+  # SQLite 轻量部署：sqlite:////opt/vinvest/data/vinvest.db
+  # PostgreSQL 生产：postgresql://vinvest:ChangeMe_2026@127.0.0.1:5432/vinvest
+  url: "sqlite:////opt/vinvest/data/vinvest.db"
+
+redis:
+  host: 127.0.0.1
+  port: 6379
+
+knowledge:
+  vector_db_path: "/opt/vinvest/data/chroma_db"
+  embedding_model: "paraphrase-multilingual-MiniLM-L12-v2"
+
+output:
+  report_dir: "/opt/vinvest/data/reports"
+
+# 日志级别
+logging:
+  level: INFO
