@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime
 from typing import Optional
 import logging
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 from app.core.data.market.models import Base, DailyQuote
 logger = logging.getLogger(__name__)
@@ -11,22 +11,30 @@ class DataStorage:
     """持久化行情数据到 PostgreSQL"""
 
     def __init__(self, database_url: str):
-        self.engine = create_engine(database_url,
-            connect_args={'connect_timeout': 30},  # 遇到锁时等待30秒
-            echo=False,
-            pool_size=20,
-            max_overflow=10
-        )
-        # # 启用WAL模式，允许读写并发
-        # @event.listens_for(self.engine, "connect")
-        # def set_sqlite_pragma(dbapi_connection, connection_record):
-        #     cursor = dbapi_connection.cursor()
-        #     cursor.execute("PRAGMA journal_mode=WAL;")
-        #     cursor.close()
-
+        is_sqlite = database_url.startswith("sqlite")
+        if is_sqlite:
+            self.engine = create_engine(
+                database_url,
+                echo=False,
+                connect_args={"check_same_thread": False},
+            )
+            # SQLite WAL 模式，读写并发更稳
+            @event.listens_for(self.engine, "connect")
+            def _set_sqlite_pragma(dbapi_connection, _connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL;")
+                cursor.execute("PRAGMA foreign_keys=ON;")
+                cursor.close()
+        else:
+            self.engine = create_engine(
+                database_url,
+                connect_args={"connect_timeout": 30},
+                echo=False,
+                pool_size=20,
+                max_overflow=10,
+            )
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
-        # self._create_tables()
 
     def get_summary(self) -> dict:
         session = self.Session()

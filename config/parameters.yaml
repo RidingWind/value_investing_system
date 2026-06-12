@@ -7,18 +7,16 @@ parameters:
   description: Tushare API Token
   hot_reloadable: false
 - key: data.primary_source
-  value: baostock
+  value: mock
   type: str
   scope: technical
-  description: 主数据源标识
+  description: 主数据源标识（mock/baostock/akshare/tushare），mock 为离线模式无需外网
   hot_reloadable: true
 - key: data.backup_sources
-  value:
-  - akshare
-  - tushare
+  value: []
   type: list
   scope: technical
-  description: 备用数据源列表
+  description: 备用数据源列表（有外网时可填 [akshare, baostock]）
   hot_reloadable: true
 - key: data.market.cron
   value: 30 15 * * 1-5

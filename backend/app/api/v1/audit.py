@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 from typing import Optional, List, Any
-import json
 
 router = APIRouter(prefix="/audit", tags=["审计日志"])
 
@@ -33,13 +32,10 @@ async def get_audit_logs(
 ):
     """全局审计日志查询，支持多条件筛选和分页"""
     param_service = request.app.state.param_service
-    # 从Redis审计列表中获取所有日志（limit可根据实际情况调整）
-    all_logs = param_service.redis.lrange(param_service.audit_log_key, 0, -1)
+    all_logs = param_service.list_all_audit_logs()
 
-    items = []
-    for log_str in reversed(all_logs):  # 最新在前
-        entry = json.loads(log_str)
-        # 过滤条件
+    items: List[AuditLogOut] = []
+    for entry in all_logs:
         if key and entry.get("key") != key:
             continue
         if operator and entry.get("operator") != operator:
