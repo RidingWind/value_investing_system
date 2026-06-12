@@ -1,0 +1,54 @@
+# ============================================================
+# 价值投资自动化选股系统 - 后端 Systemd 服务单元
+# 安装路径：/etc/systemd/system/vinvest-backend.service
+# 维护命令：
+#   systemctl daemon-reload
+#   systemctl enable vinvest-backend
+#   systemctl start|stop|restart|status vinvest-backend
+#   journalctl -u vinvest-backend -f
+# ============================================================
+
+[Unit]
+Description=Value Investing Backend (FastAPI + Uvicorn)
+After=network.target redis-server.service postgresql.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+
+# 工作目录与环境
+WorkingDirectory=/opt/vinvest/backend
+Environment="PATH=/opt/vinvest/backend/.venv/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="VINVEST_CONFIG=/opt/vinvest/config/default_config.yaml"
+
+# 启动命令（使用 Uvicorn 多 workers，部署在 127.0.0.1，由 Nginx 反向代理）
+ExecStart=/opt/vinvest/backend/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 4 \
+    --log-level info \
+    --access-log \
+    --proxy-headers
+
+# 进程管理
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=30
+
+# 日志（同时写入 systemd journal 与独立文件）
+StandardOutput=append:/opt/vinvest/logs/backend.log
+StandardError=append:/opt/vinvest/logs/backend_error.log
+SyslogIdentifier=vinvest-backend
+
+# 安全加固
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+RestrictNamespaces=true
+
+[Install]
+WantedBy=multi-user.target
