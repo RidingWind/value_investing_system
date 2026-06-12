@@ -104,6 +104,21 @@ class RedisParameterService(ParameterService):
                 history.append(entry)
         return history
 
+    def list_all_audit_logs(self) -> List[Dict]:
+        try:
+            raw = self.redis.lrange(self.audit_log_key, 0, -1)
+        except Exception:
+            return []
+        entries: List[Dict] = []
+        for log_str in raw:
+            try:
+                entries.append(json.loads(log_str))
+            except Exception:
+                continue
+        # 倒序：最新的在前
+        entries.reverse()
+        return entries
+
     def _values_key(self) -> str:
         return f"{self.namespace}:values"
 

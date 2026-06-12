@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
-from typing import Optional, Dict, Any
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from typing import Any, Dict, List, Optional
 from app.core.data.financial.dynamic_adapter import DynamicFinancialAdapter
 
 
@@ -113,6 +113,21 @@ async def get_affected_indicators(api_id: int, storage=Depends(get_storage)):
     return storage.get_affected_indicators(api_id)
 
 @router.put("/indicators/{indicator_id}/deps")
-async def update_indicator_deps(indicator_id: int, deps: list, storage=Depends(get_storage)):
-    storage.update_indicator_deps(indicator_id, deps)
+async def update_indicator_deps(
+    indicator_id: int,
+    deps: list = Body(..., description="依赖列表，如 [{'api_id': 1, 'column_name': 'col'}]"),
+    storage=Depends(get_storage),
+):
+    # 直接复用 save_indicator 的依赖更新逻辑：只更新依赖，不改指标元数据
+    existing = storage.get_indicator(indicator_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="指标不存在")
+    payload = {
+        "id": existing.id,
+        "standard_field": existing.standard_field,
+        "chinese_name": existing.chinese_name,
+        "report_group": existing.report_group,
+        "formula": getattr(existing, "formula", "") or "",
+    }
+    storage.save_indicator(payload, deps=deps)
     return {"message": "依赖更新成功"}

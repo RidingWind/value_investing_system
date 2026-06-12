@@ -17,32 +17,38 @@ class FallbackDataSource(DataSource):
     def fetch_daily_quote(
             self,
             symbols,
-            start_date:Optional[date]=None,
-            end_date:Optional[date]=None):
+            start_date: Optional[date] = None,
+            end_date: Optional[date] = None):
+        """尝试主数据源，失败后依次降级到备份数据源（不做预健康检查，失败即切换）"""
+        last_error = None
         for source in [self.primary] + self.backups:
-            if not source.check_health():
-                logger.warning(f"数据源 {source.get_source_name()} 不健康，跳过")
-                continue
             try:
                 df = source.fetch_daily_quote(symbols, start_date, end_date)
                 logger.info(f"成功从 {source.get_source_name()} 获取行情")
                 return df
             except Exception as e:
                 logger.warning(f"数据源 {source.get_source_name()} 获取行情失败: {e}")
+                last_error = e
                 continue
-        raise RuntimeError("所有数据源均不可用")
+        raise RuntimeError(f"所有数据源均不可用: {last_error}")
 
     def get_all_symbols(self):
         for source in [self.primary] + self.backups:
-            if source.check_health():
-                try:
-                    return source.get_all_symbols()
-                except Exception:
-                    continue
-        raise RuntimeError("无法获取股票列表")
+            try:
+                return source.get_all_symbols()
+            except Exception:
+                continue
+        return []
 
     def check_health(self) -> bool:
-        return self.primary.check_health() or any(b.check_health() for b in self.backups)
+        """简单的健康检查：任何一个数据源可以被访问就算健康"""
+        for source in [self.primary] + list(self.backups):
+            try:
+                if source.check_health():
+                    return True
+            except Exception:
+                continue
+        return False
 
     def get_source_name(self) -> str:
         return f"fallback(primary={self.primary.get_source_name()})"
