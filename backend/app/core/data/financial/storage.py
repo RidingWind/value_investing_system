@@ -58,9 +58,21 @@ class FinancialStorage:
                     raise ValueError(f"ApiDef id={data['id']} 不存在")
                 for k, v in data.items():
                     setattr(obj, k, v)
-            else:
-                obj = ApiDef(**data)
-                session.add(obj)
+                session.commit()
+                return obj.id
+            # 先按唯一键查找是否已存在；存在则返回现有 id
+            existing = (
+                session.query(ApiDef)
+                .filter_by(source=data.get('source'), function_name=data.get('function_name'))
+                .first()
+            )
+            if existing is not None:
+                for k, v in data.items():
+                    setattr(existing, k, v)
+                session.commit()
+                return existing.id
+            obj = ApiDef(**data)
+            session.add(obj)
             session.commit()
             return obj.id
 
@@ -137,22 +149,26 @@ class FinancialStorage:
                 for k, v in data.items():
                     setattr(obj, k, v)
             else:
-                obj = IndicatorDef(**data)
-                session.add(obj)
+                # standard_field 有唯一约束，若已存在则更新而非插入
+                existing = session.query(IndicatorDef).filter_by(standard_field=data.get('standard_field')).first()
+                if existing is not None:
+                    for k, v in data.items():
+                        setattr(existing, k, v)
+                    obj = existing
+                else:
+                    obj = IndicatorDef(**data)
+                    session.add(obj)
             session.flush()  # 获取 obj.id
             indicator_id = obj.id
 
             # ---------- 统一处理依赖 ----------
-            # 清除旧依赖（在同一会话中）
             session.query(IndicatorApiDep).filter_by(indicator_id=indicator_id).delete()
 
-            # 如果前端传入了 deps，直接用前端数据
             if deps is not None:
                 for dep in deps:
                     api_id = dep.get('api_id')
                     column_name = dep.get('column_name')
                     if api_id and column_name:
-                        # 简单校验 API 是否存在
                         api = session.query(ApiDef).filter_by(id=api_id).first()
                         if api:
                             session.add(IndicatorApiDep(
@@ -161,7 +177,6 @@ class FinancialStorage:
                                 column_name=column_name
                             ))
             else:
-                # 否则利用公式自动解析依赖
                 formula = data.get('formula', '')
                 if formula:
                     from app.core.data.financial.dependency_parser import FormulaDependencyParser
